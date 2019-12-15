@@ -25,6 +25,8 @@ class Instruction
 end
 
 class Computer
+  class Halted < StandardError; end
+
   OPCODES = {
     1 =>  { command: :add,           instruction_length: 4 },
     2 =>  { command: :multiply,      instruction_length: 4 },
@@ -37,9 +39,17 @@ class Computer
     99 => { command: :halt,          instruction_length: 1 }
   }.freeze
 
-  def initialize(program, inputs)
+  def initialize(computer_id, program, inputs)
+    @computer_id = computer_id
     @memory = program.dup
     @inputs = inputs
+    @instruction_ptr = 0
+    @has_halted = false
+  end
+
+  def add_input(input)
+    # puts "Computer #{@computer_id}: Adding input #{input}"
+    @inputs << input
   end
 
   def parse_instruction()
@@ -72,80 +82,122 @@ class Computer
 
   def execute_instruction(instruction)
     instruction_ptr_modified = false
+    return_value = nil
     case instruction.command
     when :add
       operand1 = get_operand(instruction, 0)
       operand2 = get_operand(instruction, 1)
       output_address = instruction.parameters[2]
       @memory[output_address] = operand1 + operand2
+      # puts "Computer #{@computer_id}: add: @memory[#{output_address}] = #{operand1} + #{operand2}"
     when :multiply
       operand1 = get_operand(instruction, 0)
       operand2 = get_operand(instruction, 1)
       output_address = instruction.parameters[2]
       @memory[output_address] = operand1 * operand2
+      # puts "Computer #{@computer_id}: multiply: @memory[#{output_address}] = #{operand1} * #{operand2}"
     when :save
       output_address = instruction.parameters[0]
-      @memory[output_address] = @inputs.shift
+      input = @inputs.shift
+      raise "INPUT IS NIL" unless input
+      @memory[output_address] = input
+      # puts "Computer #{@computer_id}: save: @memory[#{output_address}] = #{input}"
     when :output
       operand1 = get_operand(instruction, 0)
-      return operand1
+      # puts "Computer #{@computer_id}: output: Outputting #{operand1}"
+      return_value = operand1
     when :jump_if_true
+      # puts "Computer #{@computer_id}: jump_if_true"
       if get_operand(instruction, 0) != 0
         @instruction_ptr = get_operand(instruction, 1)
         instruction_ptr_modified = true
       end
     when :jump_if_false
+      # puts "Computer #{@computer_id}: jump_if_false"
       if get_operand(instruction, 0) == 0
         @instruction_ptr = get_operand(instruction, 1) 
         instruction_ptr_modified = true
       end
     when :less_than
+      # puts "Computer #{@computer_id}: less_than"
       operand1 = get_operand(instruction, 0)
       operand2 = get_operand(instruction, 1)
       output_address = instruction.parameters[2]
       @memory[output_address] = operand1 < operand2 ? 1 : 0
     when :equals
+      # puts "Computer #{@computer_id}: equals"
       operand1 = get_operand(instruction, 0)
       operand2 = get_operand(instruction, 1)
       output_address = instruction.parameters[2]
       @memory[output_address] = operand1 == operand2 ? 1 : 0
     end
     @instruction_ptr += instruction.length unless instruction_ptr_modified
-    return nil
+    return return_value
   end
 
   def execute_program
-    @instruction_ptr = 0
+    raise "Computer has halted" if @has_halted
     loop do
       instruction = parse_instruction()
-      break if instruction.command == :halt
+      if instruction.command == :halt
+        # puts "Computer #{@computer_id}: Halting"
+        @has_halted = true
+        return { status: :halted }
+      end
       output = execute_instruction(instruction)
-      return output if output
+      return { status: :output, output_value: output } if output
     end
   end
 end
 
 def thruster_signal(program, phase_setting_sequence)
-  output_a = Computer.new(program, [phase_setting_sequence[0], 0]).execute_program
-  output_b = Computer.new(program, [phase_setting_sequence[1], output_a]).execute_program
-  output_c = Computer.new(program, [phase_setting_sequence[2], output_b]).execute_program
-  output_d = Computer.new(program, [phase_setting_sequence[3], output_c]).execute_program
-  output_e = Computer.new(program, [phase_setting_sequence[4], output_d]).execute_program
+  output_a = Computer.new('A', program, [phase_setting_sequence[0], 0]).execute_program[:output_value]
+  output_b = Computer.new('B', program, [phase_setting_sequence[1], output_a]).execute_program[:output_value]
+  output_c = Computer.new('C', program, [phase_setting_sequence[2], output_b]).execute_program[:output_value]
+  output_d = Computer.new('D', program, [phase_setting_sequence[3], output_c]).execute_program[:output_value]
+  output_e = Computer.new('E', program, [phase_setting_sequence[4], output_d]).execute_program[:output_value]
   return output_e
 end
 
-def max_thruster_signal
+def thruster_signal_feedback_loop(program, phase_setting_sequence)
+  computers = [
+    Computer.new('A', program, [phase_setting_sequence[0], 0]),
+    Computer.new('B', program, [phase_setting_sequence[1]]),
+    Computer.new('C', program, [phase_setting_sequence[2]]),
+    Computer.new('D', program, [phase_setting_sequence[3]]),
+    Computer.new('E', program, [phase_setting_sequence[4]]),
+  ]
+  
+  computer_index = 0
+  last_output_from_last_computer = nil
+  loop do
+    next_computer_index = (computer_index + 1) % computers.length
+    output_hash = computers[computer_index].execute_program
+    output_status = output_hash[:status]
+    output_value = output_hash[:output_value]
+    if output_status == :halted && computer_index == computers.length - 1
+      return last_output_from_last_computer
+    end
+    if computer_index == computers.length - 1 && output_value
+      last_output_from_last_computer = output_value
+    end
+    computers[next_computer_index].add_input(output_value)
+    computer_index = next_computer_index
+  end
+end
+
+def max_thruster_signal(range, calculation_method)
   max = nil
-  (0..4).each do |i|
-    (0..4).each do |j|
+  range.each do |i|
+    range.each do |j|
       next if j == i
-      (0..4).each do |k|
+      range.each do |k|
         next if k == j || k == i
-        (0..4).each do |l|
+        range.each do |l|
           next if l == k || l == j || l == i
-          (0..4).each do |m|
+          range.each do |m|
             next if m == l || m == k || m == j || m == i
-            signal = thruster_signal(MAIN_PROGRAM, [i, j, k, l, m])
+            signal = self.send(calculation_method, MAIN_PROGRAM, [i, j, k, l, m])
             max = signal if !max || signal > max
           end
         end
@@ -161,5 +213,18 @@ puts thruster_signal([3,23,3,24,1002,24,10,24,1002,23,-1,23,101,5,23,23,1,24,23,
 puts thruster_signal([3,31,3,32,1002,32,10,32,1001,31,-2,31,1007,31,0,33,1002,33,7,33,1,33,31,31,1,32,31,31,4,31,99,0,0,0], [1, 0, 4, 3, 2]) == 65210
 
 # Part 1 - Execute
-puts max_thruster_signal
+puts max_thruster_signal(0..4, :thruster_signal)
 # 368584
+
+# Part 2 - Tests
+puts thruster_signal_feedback_loop(
+  [3,26,1001,26,-4,26,3,27,1002,27,2,27,1,27,26,27,4,27,1001,28,-1,28,1005,28,6,99,0,0,5],
+  [9,8,7,6,5]
+) == 139629729
+puts thruster_signal_feedback_loop(
+  [3,52,1001,52,-5,52,3,53,1,52,56,54,1007,54,5,55,1005,55,26,1001,54,-5,54,1105,1,12,1,53,54,53,1008,54,0,55,1001,55,1,55,2,53,55,53,4,53,1001,56,-1,56,1005,56,6,99,0,0,0,0,10],
+  [9,7,8,5,6]
+) == 18216
+
+# Part 2 - Execute
+puts max_thruster_signal(5..9, :thruster_signal_feedback_loop)
