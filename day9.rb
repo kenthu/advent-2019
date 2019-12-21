@@ -218,3 +218,8 @@ end
 computer = Computer.new('main program', MAIN_PROGRAM, [1])#.set_debug(true)
 # computer.print_memory
 computer.execute_program
+# 2518058886
+
+# Part 2 - Execute
+Computer.new('main program', MAIN_PROGRAM, [2]).execute_program
+# 44292
