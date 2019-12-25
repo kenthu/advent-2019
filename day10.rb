@@ -22,14 +22,18 @@ class LineOfSightChecker
     @offset_map_cache[target_coordinates]
   end
 
+  def self.find_atomic_step(offset_coordinates)
+    greatest_common_divisor = offset_coordinates[0].gcd(offset_coordinates[1])
+    [
+      offset_coordinates[0] / greatest_common_divisor,
+      offset_coordinates[1] / greatest_common_divisor
+    ]
+  end
+
   def self.calculate_blocking_coordinates(target_coordinates)
     # puts "Finding coordinates blocking #{target_coordinates}" if DEBUG
     return Set.new if target_coordinates == [0, 0]
-    greatest_common_divisor = target_coordinates[0].gcd(target_coordinates[1])
-    atomic_step = [
-      target_coordinates[0] / greatest_common_divisor,
-      target_coordinates[1] / greatest_common_divisor
-    ]
+    atomic_step = find_atomic_step(target_coordinates)
     blocking_coordinates = Set.new
     coordinates_to_check = [0, 0]
     loop do
@@ -92,6 +96,43 @@ class MonitoringStationOptimizer
       end
     end
   end
+
+  # Going clockwise
+  def self.radians_from_top(offset_coordinates)
+    # Reverse the Y offset, since mathematical Y-axis is reverse of our Y-axis
+    # Use the atan2 method to get the radians
+    # Multiply result by -1 because we're going clockwise
+    # Shift result by 0.5 * pi, because we start at 12 o'clock instead of 3 o'clock
+    # Modulo with 2 * pi (full circle), to convert negatives
+    offset_x, offset_y = offset_coordinates
+    (-Math.atan2(-offset_y, offset_x) + 0.5 * Math::PI) % (2 * Math::PI)
+  end
+
+  def list_asteroids_by_zap_order(station_location)
+    station_location_x, station_location_y = station_location
+    asteroids_with_metadata = @asteroids.map do |asteroid_location_x, asteroid_location_y|
+      offset = [
+        asteroid_location_x - station_location_x,
+        asteroid_location_y - station_location_y
+      ]
+      next if offset == [0, 0]
+      atomic_step = LineOfSightChecker.find_atomic_step(offset)
+      radians = self.class.radians_from_top(atomic_step)
+      distance = Math.sqrt(offset[0]**2 + offset[1]**2)
+      { radians: radians, distance: distance, coordinates: [asteroid_location_x, asteroid_location_y] }
+    end.compact
+    all_asteroids = []
+    grouped_asteroids = asteroids_with_metadata.group_by { |asteroid| asteroid[:radians] }
+    grouped_asteroids.each_value do |asteroids_for_angle|
+      asteroids_for_angle.sort_by! { |asteroid| asteroid[:distance] }
+      asteroids_for_angle.each_with_index { |asteroid, i| asteroid[:order] = i }
+      all_asteroids += asteroids_for_angle
+    end
+    sorted_asteroids = all_asteroids.sort_by { |asteroid| [asteroid[:order], asteroid[:radians]] }
+    sorted_asteroids.each_with_index do |asteroid, i|
+      puts "#{i+1}\t#{asteroid[:coordinates]}"
+    end
+  end
 end
 
 # Part 1 - Test
@@ -104,3 +145,9 @@ raise 'Test 5 failed' unless MonitoringStationOptimizer.new('day10_test_5.txt').
 # Part 1 - Execute
 puts MonitoringStationOptimizer.new('day10_map.txt').find_best_location
 # {:best_location=>[37, 25], :max_visible_asteroids=>309}
+
+# Part 2 - Test
+# MonitoringStationOptimizer.new('day10_test_6.txt').list_asteroids_by_zap_order([8, 3])
+# MonitoringStationOptimizer.new('day10_test_5.txt').list_asteroids_by_zap_order([11, 13])
+MonitoringStationOptimizer.new('day10_map.txt').list_asteroids_by_zap_order([37, 25])
+# 200	[4, 16] => 416
